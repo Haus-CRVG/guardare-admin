@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Haus Backup | CRM</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="view-login" style="display:flex;">
+    <div class="login-box">
+        <div class="login-logo">🛡️ Haus Backup<span>CRM</span></div>
+        <div class="form-group">
+            <label>E-mail</label>
+            <input type="email" id="login-email" placeholder="seuemail@haus.com">
+        </div>
+        <div class="form-group">
+            <label>Senha</label>
+            <input type="password" id="login-senha" placeholder="••••••••" onkeydown="if(event.key==='Enter') fazerLogin()">
+        </div>
+        <div id="login-erro" style="display:none; color:var(--danger); font-size:13px; margin-bottom:12px;"></div>
+        <button class="btn-new" style="width:100%;" onclick="fazerLogin()">Entrar</button>
+    </div>
+</div>
+
+<div id="view-trocar-senha" style="display:none;">
+    <div class="login-box">
+        <div class="login-logo">🔑 Trocar Senha<span>Necessário no primeiro acesso</span></div>
+        <div class="form-group">
+            <label>Nova senha</label>
+            <input type="password" id="ts-nova-senha" placeholder="Mínimo 6 caracteres">
+        </div>
+        <div class="form-group">
+            <label>Confirmar nova senha</label>
+            <input type="password" id="ts-confirma-senha" onkeydown="if(event.key==='Enter') salvarTrocaSenha()">
+        </div>
+        <div id="ts-erro" style="display:none; color:var(--danger); font-size:13px; margin-bottom:12px;"></div>
+        <button class="btn-new" style="width:100%;" onclick="salvarTrocaSenha()">Salvar e Continuar</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modal-credenciais" style="display:none">
+    <div class="modal-box" style="max-width:420px;">
+        <h3>🔑 Credenciais de Acesso</h3>
+        <p id="cred-contexto" style="font-size:13px; color:var(--muted); margin-bottom:16px;"></p>
+        <div class="form-group">
+            <label>E-mail</label>
+            <input type="text" id="cred-email" readonly>
+        </div>
+        <div class="form-group">
+            <label>Senha temporária</label>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="cred-senha" readonly style="flex:1;">
+                <button class="btn-action" onclick="copiarCredencial('cred-senha')">📋 Copiar</button>
+            </div>
+        </div>
+        <div class="hint">Repasse essas informações com segurança. A pessoa poderá trocar a senha no primeiro acesso.</div>
+        <div class="form-actions">
+            <button class="btn-new" onclick="fecharModalCredenciais()">Fechar</button>
+        </div>
+    </div>
+</div>
+
+<div id="app-crm" style="display:none">
+
+<div id="view-lista">
+    <div class="header">
+        <div>
+            <h1>🛡️ Haus Backup <span style="font-weight:400; color:var(--muted); font-size:16px;">| CRM</span></h1>
+            <div class="subtitle">Gestão de clientes, perfis de backup e contratos</div>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <button class="btn-action" id="btn-usuarios" style="display:none;" onclick="abrirUsuarios()">👑 Gerenciar Usuários</button>
+            <button class="btn-action" onclick="abrirChamadosAdmin()">🎫 Chamados <span id="badge-chamados" class="badge-nao-lida" style="display:none;">0</span></button>
+            <button class="btn-action" id="btn-faturamento" onclick="abrirFaturamento()">💰 Faturamento</button>
+            <button class="btn-new" onclick="abrirNovoCliente()">+ Novo Cliente</button>
+            <button class="btn-action" onclick="fazerLogout()">🚪 Sair</button>
+        </div>
+    </div>
+
+    <div class="stats-grid" id="stats-grid"></div>
+    <div id="filtro-ativo-aviso" style="display:none; margin-bottom:16px;"></div>
+
+    <div class="table-container">
+        <div class="filters">
+            <input type="text" id="filtro-busca" placeholder="Buscar por Cliente ou CNPJ/CPF..." oninput="renderLista()">
+            <label style="font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px;">De: <input type="date" id="filtro-data-de" onchange="renderLista()"></label>
+            <label style="font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px;">Até: <input type="date" id="filtro-data-ate" onchange="renderLista()"></label>
+            <select id="filtro-status" onchange="renderLista()">
+                <option value="">Status: Todos</option>
+                <option value="lead">Lead</option>
+                <option value="aguardando">Aguardando Aceite</option>
+                <option value="ativo">Ativo</option>
+                <option value="cancelado">Cancelado</option>
+            </select>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Código</th>
+                    <th>Cliente / CNPJ-CPF</th>
+                    <th>Perfis de Backup</th>
+                    <th>Cadastro</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-clientes"></tbody>
+        </table>
+    </div>
+</div>
+
+<div id="view-detalhe" style="display:none">
+    <button class="btn-back" onclick="voltarLista()">&larr; Voltar para clientes</button>
+
+    <div class="detail-header">
+        <div>
+            <h2 id="detalhe-nome">-</h2>
+            <div class="meta" id="detalhe-meta">-</div>
+        </div>
+        <span class="status" id="detalhe-status-badge">-</span>
+    </div>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="dados" onclick="mudarTab('dados')">Dados</button>
+        <button class="tab-btn" data-tab="perfis" onclick="mudarTab('perfis')">Perfis de Backup</button>
+        <button class="tab-btn" data-tab="historico" onclick="mudarTab('historico')">Histórico</button>
+        <button class="tab-btn" data-tab="financeiro" onclick="mudarTab('financeiro')">Financeiro</button>
+    </div>
+
+    <div class="tab-content">
+
+        <div id="tab-dados">
+            <div class="form-grid">
+                <div class="form-group full">
+                    <label style="font-size:14px; color:var(--text); font-weight:600;">Dados do Responsável</label>
+                </div>
+                <div class="form-group">
+                    <label class="required">Nome do Proprietário</label>
+                    <input type="text" id="f-nomeProprietario">
+                </div>
+                <div class="form-group">
+                    <label class="required">CPF do Responsável</label>
+                    <input type="text" id="f-cpfResponsavel" placeholder="000.000.000-00">
+                </div>
+                <div class="form-group">
+                    <label class="required">Data de Nascimento</label>
+                    <input type="date" id="f-dataNascimento">
+                </div>
+                <div class="form-group">
+                    <label class="required">Telefone do Responsável</label>
+                    <input type="text" id="f-telefoneResponsavel">
+                </div>
+
+                <div class="form-group full" style="border-top:1px solid var(--border); padding-top:16px; margin-top:4px;">
+                    <label style="font-size:14px; color:var(--text); font-weight:600;">Dados da Empresa</label>
+                </div>
+                <div class="form-group full">
+                    <label class="required">Razão Social</label>
+                    <input type="text" id="f-razaoSocial">
+                </div>
+                <div class="form-group">
+                    <label class="required">CNPJ</label>
+                    <input type="text" id="f-cnpj" placeholder="00.000.000/0000-00">
+                </div>
+                <div class="form-group">
+                    <label class="required">E-mail</label>
+                    <input type="email" id="f-email">
+                </div>
+                <div class="form-group">
+                    <label class="required">Telefone</label>
+                    <input type="text" id="f-telefone">
+                </div>
+                <div class="form-group">
+                    <label class="required">Celular</label>
+                    <input type="text" id="f-celular">
+                </div>
+                <div class="form-group full">
+                    <label class="required">Endereço da Empresa (com CEP e número)</label>
+                    <input type="text" id="f-endereco" placeholder="Rua, número, bairro, cidade - UF, CEP">
+                </div>
+                <div class="form-group full" style="border-top:1px solid var(--border); padding-top:16px; margin-top:4px;">
+                    <label style="font-size:14px; color:var(--text); font-weight:600;">Plano Contratado</label>
+                </div>
+                <div class="form-group">
+                    <label>Plano (nome/cota)</label>
+                    <input type="text" id="f-plano-nome" placeholder="Ex: 3GB - Mensal">
+                </div>
+                <div class="form-group">
+                    <label>Valor de Recorrência (R$)</label>
+                    <input type="number" step="0.01" id="f-plano-valor" placeholder="Ex: 199.00">
+                </div>
+                <div class="form-group">
+                    <label>Ciclo de Cobrança</label>
+                    <select id="f-plano-ciclo">
+                        <option value="mensal">Mensal</option>
+                        <option value="trimestral">Trimestral</option>
+                        <option value="anual">Anual</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Dia de Vencimento</label>
+                    <input type="number" min="1" max="31" id="f-plano-dia" placeholder="Ex: 8">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn-new" onclick="salvarDadosCliente()">Salvar Dados</button>
+                <button class="btn-action" onclick="gerarAcessoPortal()">🔑 Gerar Acesso ao Portal</button>
+                <button class="btn-danger" id="btn-cancelar-cliente" onclick="cancelarCliente()">Cancelar Cliente</button>
+            </div>
+            <div class="hint">CNPJ idêntico a um já cadastrado é bloqueado. Matriz e filiais (mesma raiz, dígito de filial diferente) são permitidas.</div>
+        </div>
+
+        <div id="tab-perfis" style="display:none">
+            <div class="perfil-list-header">
+                <div id="perfis-info" style="font-size:13px;color:var(--muted)"></div>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-action" id="btn-enviar-aceite" onclick="enviarLinkAceite()">📨 Enviar Link de Aceite</button>
+                    <button class="btn-action" id="btn-confirmar-aceite" onclick="confirmarAceiteManual()" style="display:none; border-color:var(--success); color:var(--success);">✅ Confirmar Aceite (Manual)</button>
+                    <button class="btn-new" onclick="abrirModalPerfil()">+ Novo Perfil</button>
+                </div>
+            </div>
+            <div id="lista-perfis"></div>
+        </div>
+
+        <div id="tab-historico" style="display:none">
+            <div id="lista-historico"></div>
+        </div>
+
+        <div id="tab-financeiro" style="display:none">
+            <div id="financeiro-resumo" style="margin-bottom:12px; font-size:14px; color:var(--muted);"></div>
+            <div id="financeiro-acoes" style="margin-bottom:16px;"></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Mês de Referência</th>
+                        <th>Valor</th>
+                        <th>Vencimento</th>
+                        <th>Status</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="lista-faturas"></tbody>
+            </table>
+        </div>
+
+    </div>
+</div>
+
+<div id="view-faturamento" style="display:none">
+    <button class="btn-back" onclick="voltarListaDeFaturamento()">&larr; Voltar para clientes</button>
+    <div class="header">
+        <div>
+            <h1>Faturamento</h1>
+            <div class="subtitle" id="faturamento-mes-label">-</div>
+        </div>
+    </div>
+    <div class="stats-grid">
+        <div class="stat-card"><h3>A Faturar Este Mês</h3><p id="faturamento-total">R$ 0,00</p></div>
+        <div class="stat-card" style="border-left-color: var(--success)"><h3>Clientes Selecionados</h3><p id="faturamento-qtd">0</p></div>
+    </div>
+    <div class="table-container">
+        <div class="filters">
+            <input type="text" id="fat-busca" placeholder="Buscar por Cliente ou CNPJ..." oninput="renderFaturamento()">
+            <label style="font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px;">
+                Período:
+                <select id="fat-periodo" onchange="alternarPeriodoFaturamento()">
+                    <option value="mensal">Mensal (mês inteiro)</option>
+                    <option value="personalizado">Personalizado</option>
+                </select>
+            </label>
+            <label id="fat-label-de" style="display:none; font-size:13px; color:var(--muted); align-items:center; gap:6px;">De: <input type="date" id="fat-data-de" onchange="renderFaturamento()"></label>
+            <label id="fat-label-ate" style="display:none; font-size:13px; color:var(--muted); align-items:center; gap:6px;">Até: <input type="date" id="fat-data-ate" onchange="renderFaturamento()"></label>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="check-todos" onclick="alternarTodosFaturamento(this)"></th>
+                    <th>Cliente</th>
+                    <th>Plano</th>
+                    <th>Dia Venc.</th>
+                    <th>Valor</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-faturamento"></tbody>
+        </table>
+        <div style="padding:20px; border-top:1px solid var(--border);">
+            <button class="btn-new" onclick="gerarBoletosLote()">Gerar Boletos dos Selecionados</button>
+        </div>
+    </div>
+    <div class="hint">Lista clientes Ativos com ciclo Mensal que ainda não têm boleto gerado para o mês corrente. Use o filtro De/Até (dia do mês) pra separar levas de faturamento, ex: dia 1 a 14 e depois 15 a 30. Depois de gerado, o boleto passa a aparecer na aba Financeiro do próprio cliente, onde dá pra emitir a NFSe.</div>
+</div>
+
+<div id="view-chamados-admin" style="display:none">
+    <button class="btn-back" onclick="voltarListaDeChamadosAdmin()">&larr; Voltar para clientes</button>
+    <div class="header">
+        <div>
+            <h1>🎫 Chamados</h1>
+            <div class="subtitle">Conversas com os clientes</div>
+        </div>
+    </div>
+    <div class="chamados-layout">
+        <div class="chamados-lista-painel">
+            <div id="lista-chamados-admin"></div>
+        </div>
+        <div class="chamados-thread-painel">
+            <div id="chamado-admin-vazio" class="empty-state">
+                <p>Selecione um chamado à esquerda para ver a conversa.</p>
+            </div>
+            <div id="chamado-admin-conteudo" style="display:none;">
+                <div class="chamado-admin-header">
+                    <div>
+                        <strong id="chamado-admin-titulo">-</strong>
+                        <div id="chamado-admin-cliente" style="font-size:13px; color:var(--muted);"></div>
+                    </div>
+                    <select id="chamado-admin-status" onchange="mudarStatusChamadoAdmin()">
+                        <option value="aberto">Aberto</option>
+                        <option value="andamento">Em Andamento</option>
+                        <option value="resolvido">Resolvido</option>
+                    </select>
+                </div>
+                <div class="chat-thread" id="chat-thread-admin"></div>
+                <div class="chat-input">
+                    <textarea id="chat-input-admin" placeholder="Escreva uma resposta..."></textarea>
+                    <button class="btn-new" onclick="enviarMensagemChamadoAdmin()">Enviar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="view-usuarios" style="display:none">
+    <button class="btn-back" onclick="voltarListaDeUsuarios()">&larr; Voltar para clientes</button>
+    <div class="header">
+        <div>
+            <h1>👑 Gerenciar Usuários</h1>
+            <div class="subtitle">Usuários com acesso ao CRM</div>
+        </div>
+        <button class="btn-new" onclick="abrirModalUsuario()">+ Novo Usuário</button>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>E-mail</th>
+                    <th>Nível</th>
+                    <th>Acesso Financeiro</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-usuarios"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modal-usuario" style="display:none">
+    <div class="modal-box" style="max-width:440px;">
+        <h3>Novo Usuário</h3>
+        <div class="form-group">
+            <label class="required">Nome</label>
+            <input type="text" id="u-nome">
+        </div>
+        <div class="form-group">
+            <label class="required">E-mail</label>
+            <input type="email" id="u-email">
+        </div>
+        <label class="checkbox-item" style="margin: 6px 0 18px;">
+            <input type="checkbox" id="u-financeiro"> Acesso ao módulo Financeiro (gerar boleto/NFSe)
+        </label>
+        <div class="hint" style="margin-top:0;">Sem essa permissão, o usuário só vê valor e vencimento das faturas — sem poder gerar boleto/NFSe nem acessar o Faturamento em lote. Uma senha temporária será gerada e mostrada na tela.</div>
+        <div class="form-actions">
+            <button class="btn-new" onclick="criarUsuario()">Criar Usuário</button>
+            <button class="btn-action" onclick="fecharModalUsuario()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modal-perfil" style="display:none">
+    <div class="modal-box">
+        <h3>Novo Perfil de Backup</h3>
+        <div class="form-grid">
+            <div class="form-group">
+                <label class="required">Nome do Perfil</label>
+                <input type="text" id="p-nome" placeholder="Ex: Firebird">
+            </div>
+            <div class="form-group">
+                <label>ID Software Backup</label>
+                <input type="text" id="p-idsoftware">
+            </div>
+            <div class="form-group">
+                <label class="required">Dias de Retenção</label>
+                <select id="p-retencao">
+                    <option>5 dias</option>
+                    <option>10 dias</option>
+                    <option>15 dias</option>
+                    <option>20 dias</option>
+                    <option selected>30 dias</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="required">Nome da Máquina</label>
+                <input type="text" id="p-maquina" placeholder="Ex: Servidor">
+            </div>
+            <div class="form-group">
+                <label class="required">Sistema Operacional</label>
+                <select id="p-so">
+                    <option>Windows</option>
+                    <option>Linux</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="required">Tipo de Backup</label>
+                <select id="p-tipo" onchange="alternarCampoBanco()">
+                    <option value="arquivos">Arquivos/Pastas</option>
+                    <option value="banco">Banco de Dados</option>
+                </select>
+            </div>
+            <div class="form-group" id="grupo-banco" style="display:none">
+                <label class="required">Banco de Dados</label>
+                <select id="p-banco">
+                    <option>Firebird</option>
+                    <option>MySQL</option>
+                    <option>SQL Server</option>
+                    <option>PostgreSQL</option>
+                </select>
+            </div>
+            <div class="form-group full">
+                <label class="required">Origem do Backup (um caminho por linha)</label>
+                <textarea id="p-origem" placeholder="C:\ecosis\dados\ecodados.eco"></textarea>
+            </div>
+            <div class="form-group full">
+                <label class="required">Caminho da Cópia Local</label>
+                <textarea id="p-copialocal" placeholder="Ex: C:/Backup Local/"></textarea>
+            </div>
+            <div class="form-group full">
+                <label class="required">Dias da Semana</label>
+                <div class="checkbox-grid">
+                    <label class="checkbox-item"><input type="checkbox" value="Segunda" checked> Segunda</label>
+                    <label class="checkbox-item"><input type="checkbox" value="Terça" checked> Terça</label>
+                    <label class="checkbox-item"><input type="checkbox" value="Quarta" checked> Quarta</label>
+                    <label class="checkbox-item"><input type="checkbox" value="Quinta" checked> Quinta</label>
+                    <label class="checkbox-item"><input type="checkbox" value="Sexta" checked> Sexta</label>
+                    <label class="checkbox-item"><input type="checkbox" value="Sábado" checked> Sábado</label>
+                    <label class="checkbox-item"><input type="checkbox" value="Domingo"> Domingo</label>
+                </div>
+            </div>
+            <div class="form-group full">
+                <label class="required">Horários de Início</label>
+                <textarea id="p-horarios" placeholder="Seg a Sáb 11:00&#10;Seg a sexta 17:00"></textarea>
+            </div>
+            <div class="form-group full">
+                <label>Filtros (extensões a excluir)</label>
+                <textarea id="p-filtros"></textarea>
+            </div>
+            <div class="form-group full">
+                <label>Anotações</label>
+                <textarea id="p-anotacoes"></textarea>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button class="btn-new" onclick="salvarPerfil()">Salvar Perfil</button>
+            <button class="btn-action" onclick="fecharModalPerfil()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modal-boleto" style="display:none">
+    <div class="modal-box" style="max-width:520px;">
+        <h3>Boleto (espelho/simulação)</h3>
+        <div class="boleto-box">
+            <div class="boleto-header">
+                <strong>🛡️ Haus Backup</strong>
+                <span>Boleto de Cobrança</span>
+            </div>
+            <div class="boleto-linha"><span>Beneficiário</span><b>Haus Backup</b></div>
+            <div class="boleto-linha"><span>Pagador</span><b id="boleto-pagador">-</b></div>
+            <div class="boleto-linha"><span>CNPJ/CPF</span><b id="boleto-cnpj">-</b></div>
+            <div class="boleto-linha"><span>Referência</span><b id="boleto-referencia">-</b></div>
+            <div class="boleto-linha"><span>Vencimento</span><b id="boleto-vencimento">-</b></div>
+            <div class="boleto-linha boleto-valor"><span>Valor</span><b id="boleto-valor">-</b></div>
+            <div class="boleto-codigo" id="boleto-linha-digitavel">-</div>
+            <div class="boleto-barras"></div>
+        </div>
+        <div class="form-actions">
+            <button class="btn-new" onclick="enviarBoletoEmail()">📧 Enviar por E-mail</button>
+            <button class="btn-action" onclick="salvarBoletoPDF()">💾 Salvar em PDF</button>
+            <button class="btn-action" onclick="fecharModalBoleto()">Fechar</button>
+        </div>
+    </div>
+</div>
+
+</div><!-- fim #app-crm -->
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="script.js"></script>
+
+</body>
+</html>
