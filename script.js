@@ -2,6 +2,20 @@
 const SUPABASE_URL = 'https://kelbiyyxvbecukeelfrf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_6pWRhZzU2D2QF74FsnYItA_4s9b--38';
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Extrai a mensagem de erro de verdade de uma chamada a Edge Function
+// (o Supabase, por padrão, só devolve "non-2xx status code", escondendo o motivo real)
+async function extrairErroFuncao(error, data) {
+    if (data && data.error) return data.error;
+    if (!error) return null;
+    try {
+        if (error.context && typeof error.context.json === 'function') {
+            const corpo = await error.context.json();
+            if (corpo && corpo.error) return corpo.error;
+        }
+    } catch (e) { /* segue pro fallback */ }
+    return error.message || 'Erro desconhecido';
+}
 // Cliente separado, sem guardar sessão — usado só para criar login de outras pessoas
 // (funcionários, clientes) sem substituir a sessão de quem está logado no momento.
 const dbAuthOnly = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -45,7 +59,8 @@ function dbRowToCliente(row) {
             nome: row.plano_nome || '',
             valor: parseFloat(row.plano_valor) || 0,
             ciclo: row.plano_ciclo || 'mensal',
-            diaVencimento: row.plano_dia_vencimento || null
+            diaVencimento: row.plano_dia_vencimento || null,
+            implantacao: parseFloat(row.plano_implantacao) || 0
         },
         // Carregados sob demanda quando o cliente é aberto (ver carregarDetalheCliente)
         perfis: [],
@@ -97,7 +112,6 @@ async function carregarDetalheCliente(id) {
         tipo: row.tipo_backup,
         banco: row.banco_dados || '',
         origem: row.origem,
-        copialocal: row.caminho_copia_local,
         dias: row.dias_semana || [],
         horarios: row.horarios_inicio,
         filtros: row.filtros || '',
@@ -118,7 +132,14 @@ async function carregarDetalheCliente(id) {
         id: row.id,
         referencia: row.referencia,
         valor: parseFloat(row.valor),
-        status: row.status
+        status: row.status,
+        asaasPaymentId: row.asaas_payment_id || null,
+        boletoUrl: row.boleto_url || null,
+        invoiceUrl: row.invoice_url || null,
+        nfseId: row.nfse_id || null,
+        nfseStatus: row.nfse_status || null,
+        dataVencimento: row.data_vencimento || null,
+        incluiImplantacao: row.inclui_implantacao || false
     }));
 }
 
@@ -277,6 +298,7 @@ function renderDetalhe() {
     document.getElementById('f-plano-valor').value = c.plano.valor || '';
     document.getElementById('f-plano-ciclo').value = c.plano.ciclo;
     document.getElementById('f-plano-dia').value = c.plano.diaVencimento || '';
+    document.getElementById('f-plano-implantacao').value = c.plano.implantacao || '';
 
     document.getElementById('btn-cancelar-cliente').style.display = c.status === 'cancelado' ? 'none' : 'inline-block';
 
@@ -340,19 +362,22 @@ async function salvarDadosCliente() {
     const novoPlanoValor = parseFloat(document.getElementById('f-plano-valor').value) || 0;
     const novoPlanoCiclo = document.getElementById('f-plano-ciclo').value;
     const novoPlanoDia = parseInt(document.getElementById('f-plano-dia').value) || null;
+    const novoPlanoImplantacao = parseFloat(document.getElementById('f-plano-implantacao').value) || 0;
     const planoCampos = [
         ['nome', 'Plano Contratado', novoPlanoNome],
         ['valor', 'Valor de Recorrência', novoPlanoValor.toFixed(2)],
         ['ciclo', 'Ciclo de Cobrança', novoPlanoCiclo],
         ['diaVencimento', 'Dia de Vencimento', novoPlanoDia ? String(novoPlanoDia) : ''],
+        ['implantacao', 'Valor de Implantação', novoPlanoImplantacao.toFixed(2)],
     ];
     planoCampos.forEach(([key, label, valor]) => {
         let atual = c.plano[key];
-        if (key === 'valor') atual = (atual || 0).toFixed(2);
+        if (key === 'valor' || key === 'implantacao') atual = (atual || 0).toFixed(2);
         if (key === 'diaVencimento') atual = atual ? String(atual) : '';
         if (atual !== valor) {
             alteracoes.push({ campo: label, de: atual || '-', para: valor || '-' });
             if (key === 'valor') c.plano[key] = novoPlanoValor;
+            else if (key === 'implantacao') c.plano[key] = novoPlanoImplantacao;
             else if (key === 'diaVencimento') c.plano[key] = novoPlanoDia;
             else c.plano[key] = valor;
         }
@@ -375,7 +400,8 @@ async function salvarDadosCliente() {
         plano_nome: c.plano.nome,
         plano_valor: c.plano.valor,
         plano_ciclo: c.plano.ciclo,
-        plano_dia_vencimento: c.plano.diaVencimento
+        plano_dia_vencimento: c.plano.diaVencimento,
+        plano_implantacao: c.plano.implantacao
     };
     const { error } = await db.from('clientes').update(payload).eq('id', c.id);
     if (error) {
@@ -471,7 +497,6 @@ function abrirModalPerfil(idx) {
         document.getElementById('p-tipo').value = p.tipo;
         document.getElementById('p-banco').value = p.banco || 'Firebird';
         document.getElementById('p-origem').value = p.origem;
-        document.getElementById('p-copialocal').value = p.copialocal;
         document.querySelectorAll('.checkbox-grid input').forEach(i => i.checked = p.dias.includes(i.value));
         document.getElementById('p-horarios').value = p.horarios;
         document.getElementById('p-filtros').value = p.filtros;
@@ -501,11 +526,10 @@ async function salvarPerfil() {
     const nome = document.getElementById('p-nome').value.trim();
     const maquina = document.getElementById('p-maquina').value.trim();
     const origem = document.getElementById('p-origem').value.trim();
-    const copialocal = document.getElementById('p-copialocal').value.trim();
     const horarios = document.getElementById('p-horarios').value.trim();
     const dias = Array.from(document.querySelectorAll('.checkbox-grid input:checked')).map(i => i.value);
 
-    if (!nome || !maquina || !origem || !copialocal || !horarios || dias.length === 0) {
+    if (!nome || !maquina || !origem || !horarios || dias.length === 0) {
         alert("Preencha os campos obrigatórios do perfil.");
         return;
     }
@@ -521,7 +545,7 @@ async function salvarPerfil() {
         tipo_backup: tipo,
         banco_dados: tipo === 'banco' ? document.getElementById('p-banco').value : null,
         origem,
-        caminho_copia_local: copialocal,
+        caminho_copia_local: '',
         dias_semana: dias,
         horarios_inicio: horarios,
         filtros: document.getElementById('p-filtros').value.trim(),
@@ -706,7 +730,8 @@ function renderFinanceiro() {
     const podeFinanceiro = !!(meuAdminInfo && meuAdminInfo.pode_financeiro);
 
     document.getElementById('financeiro-resumo').innerHTML =
-        `Plano: <strong>${c.plano.nome || '-'}</strong> · Valor: <strong>R$ ${c.plano.valor.toFixed(2)}</strong> · Ciclo: <strong>${c.plano.ciclo}</strong>`;
+        `Plano: <strong>${c.plano.nome || '-'}</strong> · Valor: <strong>R$ ${c.plano.valor.toFixed(2)}</strong> · Ciclo: <strong>${c.plano.ciclo}</strong>` +
+        (c.plano.implantacao > 0 ? ` · Implantação (única vez): <strong>R$ ${c.plano.implantacao.toFixed(2)}</strong>` : '');
 
     const ref = referenciaAtual();
     const jaTemFaturaDoMes = c.faturas.some(f => f.referencia === ref);
@@ -722,39 +747,136 @@ function renderFinanceiro() {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:30px;">Nenhuma fatura gerada ainda.</td></tr>`;
         return;
     }
-    tbody.innerHTML = c.faturas.map((f, idx) => `
+    tbody.innerHTML = c.faturas.map((f, idx) => {
+        let acoesHtml;
+        if (!podeFinanceiro) {
+            acoesHtml = `<span style="color:var(--muted); font-size:12px;">Sem acesso</span>`;
+        } else if (!f.asaasPaymentId) {
+            acoesHtml = `<button class="btn-action" onclick="gerarBoletoAsaas(${idx})" id="btn-boleto-${idx}">📄 Gerar Boleto</button>`;
+        } else {
+            const nfseHtml = f.nfseId
+                ? `<span style="font-size:12px; color:var(--muted);">NFSe: ${f.nfseStatus || 'agendada'}</span>`
+                : `<button class="btn-action" onclick="emitirNFSeAsaas(${idx})" id="btn-nfse-${idx}">🧾 Emitir NFSe</button>`;
+            acoesHtml = `<a class="btn-action" href="${f.boletoUrl}" target="_blank" style="text-decoration:none; display:inline-block;">🔗 Ver Boleto</a> ${nfseHtml}`;
+        }
+        const lixeira = podeFinanceiro ? `<button class="btn-action" onclick="excluirFatura(${idx})" title="Excluir/cancelar">🗑️</button>` : '';
+        return `
         <tr>
             <td>${f.referencia}</td>
             <td>R$ ${f.valor.toFixed(2)}</td>
-            <td>${calcularVencimento(f.referencia, c.plano.diaVencimento)}</td>
+            <td>${vencimentoDaFatura(f, c.plano)}</td>
             <td><span class="status ${statusFaturaClass[f.status]}">${statusFaturaLabel[f.status]}</span></td>
-            <td>${podeFinanceiro ? `
-                <button class="btn-action" onclick="abrirModalBoleto(${idx})">📄 Gerar Boleto</button>
-                <button class="btn-action" onclick="emitirNFSe(${idx})">🧾 Emitir NFSe</button>
-            ` : `<span style="color:var(--muted); font-size:12px;">Sem acesso</span>`}</td>
-        </tr>
-    `).join('');
+            <td>${acoesHtml} ${lixeira}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function excluirFatura(idx) {
+    const c = getClienteAtual();
+    const fatura = c.faturas[idx];
+    if (!confirm(`Excluir a fatura de ${fatura.referencia} (R$ ${fatura.valor.toFixed(2)})? ${fatura.asaasPaymentId ? 'Isso também cancela o boleto na Asaas.' : ''}`)) return;
+
+    if (fatura.asaasPaymentId) {
+        const { data, error } = await db.functions.invoke('asaas-cancelar-cobranca', { body: { faturaId: fatura.id } });
+        const erro = await extrairErroFuncao(error, data);
+        if (erro) {
+            alert('Erro ao cancelar: ' + erro);
+            return;
+        }
+    } else {
+        const { data, error } = await db.from('faturas').delete().eq('id', fatura.id).select();
+        if (error) {
+            alert('Erro ao excluir: ' + error.message);
+            return;
+        }
+        if (!data || data.length === 0) {
+            alert('Não foi possível excluir: o banco recusou a exclusão (falta a permissão de exclusão de faturas — rode o SQL indicado).');
+            return;
+        }
+    }
+
+    await registrarHistorico(c.id, "Usuário Demo", [{ campo: "Fatura", de: fatura.referencia, para: "Excluída/Cancelada" }]);
+    await carregarDetalheCliente(c.id);
+    renderFinanceiro();
+    renderHistorico();
+}
+
+async function gerarBoletoAsaas(idx) {
+    const c = getClienteAtual();
+    const fatura = c.faturas[idx];
+    const btn = document.getElementById('btn-boleto-' + idx);
+    if (btn) { btn.disabled = true; btn.textContent = 'Gerando...'; }
+
+    const { data, error } = await db.functions.invoke('asaas-gerar-cobranca', { body: { faturaId: fatura.id } });
+    const erro = await extrairErroFuncao(error, data);
+    if (erro) {
+        alert('Erro ao gerar boleto: ' + erro);
+        if (btn) { btn.disabled = false; btn.textContent = '📄 Gerar Boleto'; }
+        return;
+    }
+
+    await registrarHistorico(c.id, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "Boleto gerado via Asaas (" + fatura.referencia + ")" }]);
+    await carregarDetalheCliente(c.id);
+    renderFinanceiro();
+    renderHistorico();
+    window.open(data.boletoUrl || data.invoiceUrl, '_blank');
+}
+
+async function emitirNFSeAsaas(idx) {
+    const c = getClienteAtual();
+    const fatura = c.faturas[idx];
+    const btn = document.getElementById('btn-nfse-' + idx);
+    if (btn) { btn.disabled = true; btn.textContent = 'Emitindo...'; }
+
+    const { data, error } = await db.functions.invoke('asaas-emitir-nfse', { body: { faturaId: fatura.id } });
+    const erro = await extrairErroFuncao(error, data);
+    if (erro) {
+        alert('Erro ao emitir NFSe: ' + erro + '\n\n(Se for sobre CNPJ/config fiscal, é esperado até você abrir a empresa.)');
+        if (btn) { btn.disabled = false; btn.textContent = '🧾 Emitir NFSe'; }
+        return;
+    }
+
+    await registrarHistorico(c.id, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "NFSe solicitada (" + fatura.referencia + ")" }]);
+    await carregarDetalheCliente(c.id);
+    renderFinanceiro();
+    renderHistorico();
+    alert('NFSe agendada com sucesso! Status: ' + data.status);
 }
 
 async function gerarFaturaManual() {
     const c = getClienteAtual();
     const ref = referenciaAtual();
-    const { error } = await db.from('faturas').insert({ cliente_id: c.id, referencia: ref, valor: c.plano.valor, status: 'aberto' });
+    await carregarImplantacoesCobradas();
+    const prev = valorPrevistoFatura(c);
+    const { error } = await db.from('faturas').insert({
+        cliente_id: c.id, referencia: ref, valor: prev.valor, status: 'aberto', inclui_implantacao: prev.incluiImplantacao
+    });
     if (error) {
         alert('Erro ao gerar fatura: ' + error.message);
         console.error(error);
         return;
     }
-    await registrarHistorico(c.id, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "Gerada manualmente (" + ref + ") - R$ " + c.plano.valor.toFixed(2) }]);
+    await registrarHistorico(c.id, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "Gerada manualmente (" + ref + ") - R$ " + prev.valor.toFixed(2) + (prev.incluiImplantacao ? " (inclui implantação)" : "") }]);
     await carregarDetalheCliente(c.id);
     renderFinanceiro();
     renderHistorico();
 }
 
 function calcularVencimento(referencia, dia) {
+    if (!referencia || !/^\d{2}\/\d{4}$/.test(referencia)) return '-';
     const [mes, ano] = referencia.split('/');
     const diaFmt = String(dia || 10).padStart(2, '0');
     return `${diaFmt}/${mes}/${ano}`;
+}
+
+function formatarDataISO(iso) {
+    if (!iso) return '-';
+    const [a, m, d] = iso.slice(0, 10).split('-');
+    return `${d}/${m}/${a}`;
+}
+
+function vencimentoDaFatura(f, plano) {
+    return f.dataVencimento ? formatarDataISO(f.dataVencimento) : calcularVencimento(f.referencia, plano.diaVencimento);
 }
 
 function gerarLinhaDigitavelFake(cliente_id, valor) {
@@ -824,6 +946,7 @@ function emitirNFSe(idx) {
 let clienteIdsFaturadosNoMes = new Set();
 
 async function carregarFaturasDoMes() {
+    await carregarImplantacoesCobradas();
     const ref = referenciaAtual();
     const { data, error } = await db.from('faturas').select('cliente_id').eq('referencia', ref);
     if (error) {
@@ -895,7 +1018,7 @@ function renderFaturamento() {
                 <td>${c.razaoSocial}</td>
                 <td>${c.plano.nome || '-'}</td>
                 <td>${c.plano.diaVencimento || '-'}</td>
-                <td>R$ ${c.plano.valor.toFixed(2)}</td>
+                <td>R$ ${valorPrevistoFatura(c).valor.toFixed(2)}${valorPrevistoFatura(c).incluiImplantacao ? ' <small style="color:var(--muted)">(com implantação)</small>' : ''}</td>
                 <td><span class="status status-aguardando">Pendente</span></td>
             </tr>
         `).join('');
@@ -906,7 +1029,7 @@ function renderFaturamento() {
 function atualizarTotaisFaturamento() {
     const marcados = Array.from(document.querySelectorAll('.check-fat:checked')).map(i => i.dataset.id);
     const selecionados = clientes.filter(c => marcados.includes(c.id));
-    const total = selecionados.reduce((soma, c) => soma + c.plano.valor, 0);
+    const total = selecionados.reduce((soma, c) => soma + valorPrevistoFatura(c).valor, 0);
 
     document.getElementById('faturamento-total').textContent = "R$ " + total.toFixed(2);
     document.getElementById('faturamento-qtd').textContent = selecionados.length;
@@ -925,20 +1048,37 @@ async function gerarBoletosLote() {
         return;
     }
 
+    let sucesso = 0;
+    let falhas = [];
+
     for (const id of marcados) {
         const c = clientes.find(cl => cl.id === id);
-        const { error } = await db.from('faturas').insert({
-            cliente_id: id, referencia: ref, valor: c.plano.valor, status: 'aberto'
-        });
+        const prev = valorPrevistoFatura(c);
+
+        const { data: novaFatura, error } = await db.from('faturas').insert({
+            cliente_id: id, referencia: ref, valor: prev.valor, status: 'aberto', inclui_implantacao: prev.incluiImplantacao
+        }).select().single();
         if (error) {
-            alert('Erro ao gerar boleto para ' + c.razaoSocial + ': ' + error.message);
-            console.error(error);
+            falhas.push(c.razaoSocial + ' (erro ao salvar): ' + error.message);
             continue;
         }
-        await registrarHistorico(id, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "Boleto gerado (" + ref + ") - R$ " + c.plano.valor.toFixed(2) }]);
+
+        const { data: resultadoAsaas, error: erroFuncao } = await db.functions.invoke('asaas-gerar-cobranca', { body: { faturaId: novaFatura.id } });
+        const erro = await extrairErroFuncao(erroFuncao, resultadoAsaas);
+        if (erro) {
+            falhas.push(c.razaoSocial + ': ' + erro);
+            continue;
+        }
+
+        await registrarHistorico(id, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "Boleto gerado via Asaas (" + ref + ") - R$ " + prev.valor.toFixed(2) + (prev.incluiImplantacao ? " (inclui implantação)" : "") }]);
+        sucesso++;
     }
 
-    alert(marcados.length + " boleto(s) gerado(s) para a referência " + ref + " (simulação).");
+    let mensagem = sucesso + " boleto(s) gerado(s) com sucesso pra referência " + ref + ".";
+    if (falhas.length > 0) {
+        mensagem += "\n\nFalharam:\n" + falhas.join("\n");
+    }
+    alert(mensagem);
     await carregarFaturasDoMes();
     renderFaturamento();
 }
@@ -1183,6 +1323,23 @@ async function criarUsuario() {
 // ---------- Chamados / Chat (admin) ----------
 let chamadosAdminCache = [];
 let chamadoAdminSelecionadoId = null;
+let ultimoTotalNaoLidasAdmin = 0;
+
+function tocarSomAdmin() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'sine';
+        o.frequency.value = 740;
+        g.gain.setValueAtTime(0.001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        o.start();
+        o.stop(ctx.currentTime + 0.35);
+    } catch (e) { /* navegador sem suporte a áudio, ignora */ }
+}
 
 function chamadoTemMensagemNaoLida(ch) {
     const msgsCliente = (ch.mensagens_chamado || []).filter(m => m.autor_tipo === 'cliente');
@@ -1197,6 +1354,8 @@ async function atualizarBadgeChamados() {
     const badge = document.getElementById('badge-chamados');
     if (error) { console.error(error); return; }
     const qtdNaoLidas = (data || []).filter(chamadoTemMensagemNaoLida).length;
+    if (qtdNaoLidas > ultimoTotalNaoLidasAdmin) tocarSomAdmin();
+    ultimoTotalNaoLidasAdmin = qtdNaoLidas;
     if (qtdNaoLidas > 0) {
         badge.textContent = qtdNaoLidas;
         badge.style.display = 'inline-block';
@@ -1278,6 +1437,13 @@ async function renderChamadoAdminDetalhe() {
     document.getElementById('chamado-admin-cliente').textContent = ch.clientes ? ch.clientes.razao_social : '';
     document.getElementById('chamado-admin-status').value = ch.status;
 
+    const inputEl = document.getElementById('chat-input-admin');
+    const botaoEnviar = document.getElementById('btn-enviar-chamado-admin');
+    const resolvido = ch.status === 'resolvido';
+    inputEl.disabled = resolvido;
+    botaoEnviar.disabled = resolvido;
+    inputEl.placeholder = resolvido ? 'Chamado resolvido. Mude o status para reabrir, se precisar responder.' : 'Escreva uma resposta...';
+
     const { data, error } = await db.from('mensagens_chamado').select('*').eq('chamado_id', chamadoAdminSelecionadoId).order('criado_em', { ascending: true });
     const thread = document.getElementById('chat-thread-admin');
     if (error) {
@@ -1312,6 +1478,7 @@ async function enviarMensagemChamadoAdmin() {
     await db.from('chamados').update({ admin_visto_em: new Date().toISOString() }).eq('id', chamadoAdminSelecionadoId);
 
     document.getElementById('chat-input-admin').value = '';
+    tocarSomAdmin();
     await renderChamadoAdminDetalhe();
     await carregarChamadosAdmin();
 }
@@ -1325,6 +1492,426 @@ async function mudarStatusChamadoAdmin() {
         return;
     }
     await carregarChamadosAdmin();
+}
+
+function abrirModalNovoChamadoAdmin() {
+    const select = document.getElementById('nca-cliente');
+    select.innerHTML = clientes
+        .filter(c => c.status !== 'cancelado')
+        .map(c => `<option value="${c.id}">${c.razaoSocial}</option>`)
+        .join('');
+    document.getElementById('nca-assunto').value = '';
+    document.getElementById('nca-mensagem').value = '';
+    document.getElementById('modal-novo-chamado-admin').style.display = 'flex';
+}
+
+function fecharModalNovoChamadoAdmin() {
+    document.getElementById('modal-novo-chamado-admin').style.display = 'none';
+}
+
+async function criarChamadoAdmin() {
+    const clienteId = document.getElementById('nca-cliente').value;
+    const categoria = document.getElementById('nca-categoria').value;
+    const assunto = document.getElementById('nca-assunto').value.trim();
+    const mensagem = document.getElementById('nca-mensagem').value.trim();
+
+    if (!clienteId || !assunto || !mensagem) {
+        alert('Preencha cliente, assunto e a mensagem inicial.');
+        return;
+    }
+
+    const { data, error } = await db.from('chamados').insert({
+        cliente_id: clienteId, assunto, categoria, status: 'aberto', admin_visto_em: new Date().toISOString()
+    }).select().single();
+    if (error) {
+        alert('Erro ao abrir chamado: ' + error.message);
+        console.error(error);
+        return;
+    }
+
+    const { error: e2 } = await db.from('mensagens_chamado').insert({
+        chamado_id: data.id, autor_tipo: 'suporte', autor_nome: (meuAdminInfo && meuAdminInfo.nome) || 'Suporte', texto: mensagem
+    });
+    if (e2) { console.error(e2); }
+
+    fecharModalNovoChamadoAdmin();
+    await carregarChamadosAdmin();
+    selecionarChamadoAdmin(data.id);
+}
+
+// ---------- Propostas / Orçamento ----------
+// Dados fixos do fornecedor — ajuste aqui com os dados reais da Haus Pro Solutions
+const FORNECEDOR = {
+    nome: "Haus Pro Solutions",
+    cnpj: "00.000.000/0000-00", // TODO: ajustar com o CNPJ real
+    endereco: "Cascavel - PR", // TODO: ajustar com o endereço real
+    telefone: "(45) 00000-0000", // TODO: ajustar com o telefone real
+    email: "contato@hps.dev.br"
+};
+const MARCA_DAGUA_TEXTO = "HAUS PRO SOLUTIONS";
+
+let itensPropostaAtual = [];
+let propostasCache = [];
+
+function abrirPropostas() {
+    document.getElementById('view-lista').style.display = 'none';
+    document.getElementById('view-propostas').style.display = 'block';
+    document.getElementById('propostas-form-view').style.display = 'none';
+    document.getElementById('propostas-lista-view').style.display = 'block';
+    carregarPropostas();
+}
+
+function voltarListaDePropostas() {
+    document.getElementById('view-propostas').style.display = 'none';
+    document.getElementById('view-lista').style.display = 'block';
+    renderLista();
+}
+
+async function carregarPropostas() {
+    const { data, error } = await db.from('propostas').select('*').order('numero', { ascending: false });
+    const tbody = document.getElementById('tbody-propostas');
+    if (error) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:30px;">Erro ao carregar propostas.</td></tr>`;
+        console.error(error);
+        return;
+    }
+    propostasCache = data || [];
+    if (propostasCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:30px;">Nenhuma proposta gerada ainda.</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = propostasCache.map(p => `
+        <tr>
+            <td>Nº ${p.numero}</td>
+            <td>${p.cliente_nome}</td>
+            <td>${formatarData(p.data_proposta)}</td>
+            <td>R$ ${parseFloat(p.valor_total).toFixed(2)}</td>
+            <td><button class="btn-action" onclick="reimprimirProposta('${p.id}')">🖨️ Ver/Reimprimir</button></td>
+        </tr>
+    `).join('');
+}
+
+function abrirFormNovaProposta() {
+    document.getElementById('propostas-lista-view').style.display = 'none';
+    document.getElementById('propostas-form-view').style.display = 'block';
+
+    const select = document.getElementById('prop-cliente-select');
+    select.innerHTML = '<option value="">— selecionar para preencher automaticamente —</option>' +
+        clientes.filter(c => c.status !== 'cancelado').map(c => `<option value="${c.id}">${c.razaoSocial}</option>`).join('');
+
+    document.getElementById('prop-cliente-nome').value = '';
+    document.getElementById('prop-cliente-cnpj').value = '';
+    document.getElementById('prop-cliente-telefone').value = '';
+    document.getElementById('prop-cliente-endereco').value = '';
+    document.getElementById('prop-cliente-email').value = '';
+    document.getElementById('prop-cidade').value = 'Cascavel - PR';
+    document.getElementById('prop-data').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('prop-prazo').value = 'Imediato após assinatura do contrato';
+    document.getElementById('prop-validade').value = '07 dias';
+    document.getElementById('prop-pagamento').value = 'Boleto Bancário';
+
+    itensPropostaAtual = [{ descricao: '', quantidade: 1, valorUnitario: 0 }];
+    renderItensProposta();
+}
+
+function preencherClienteProposta() {
+    const id = document.getElementById('prop-cliente-select').value;
+    if (!id) return;
+    const c = clientes.find(cl => cl.id === id);
+    if (!c) return;
+    document.getElementById('prop-cliente-nome').value = c.razaoSocial;
+    document.getElementById('prop-cliente-cnpj').value = c.cnpj;
+    document.getElementById('prop-cliente-telefone').value = c.telefone;
+    document.getElementById('prop-cliente-endereco').value = c.endereco;
+    document.getElementById('prop-cliente-email').value = c.email;
+}
+
+function renderItensProposta() {
+    const tbody = document.getElementById('tbody-itens-proposta');
+    tbody.innerHTML = itensPropostaAtual.map((item, idx) => `
+        <tr>
+            <td>${String(idx + 1).padStart(2, '0')}</td>
+            <td><input type="text" value="${item.descricao}" oninput="itensPropostaAtual[${idx}].descricao=this.value"></td>
+            <td><input type="number" min="1" value="${item.quantidade}" style="width:70px;" oninput="itensPropostaAtual[${idx}].quantidade=parseFloat(this.value)||0; recalcularTotalProposta();"></td>
+            <td><input type="number" step="0.01" min="0" value="${item.valorUnitario}" style="width:110px;" oninput="itensPropostaAtual[${idx}].valorUnitario=parseFloat(this.value)||0; recalcularTotalProposta();"></td>
+            <td class="valor-total-item">R$ ${(item.quantidade * item.valorUnitario).toFixed(2)}</td>
+            <td><button class="btn-action" onclick="removerItemProposta(${idx})">✕</button></td>
+        </tr>
+    `).join('');
+    recalcularTotalProposta();
+}
+
+function adicionarItemProposta() {
+    itensPropostaAtual.push({ descricao: '', quantidade: 1, valorUnitario: 0 });
+    renderItensProposta();
+}
+
+function removerItemProposta(idx) {
+    if (itensPropostaAtual.length === 1) {
+        alert('A proposta precisa ter ao menos um item.');
+        return;
+    }
+    itensPropostaAtual.splice(idx, 1);
+    renderItensProposta();
+}
+
+function recalcularTotalProposta() {
+    document.querySelectorAll('#tbody-itens-proposta tr').forEach((tr, idx) => {
+        const item = itensPropostaAtual[idx];
+        tr.querySelector('.valor-total-item').textContent = 'R$ ' + (item.quantidade * item.valorUnitario).toFixed(2);
+    });
+    const total = itensPropostaAtual.reduce((soma, i) => soma + (i.quantidade * i.valorUnitario), 0);
+    document.getElementById('prop-valor-total-exibido').textContent = 'R$ ' + total.toFixed(2);
+    return total;
+}
+
+function formatarDataExtenso(isoDate) {
+    const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const [ano, mes, dia] = isoDate.split('-');
+    return `${parseInt(dia)} de ${meses[parseInt(mes) - 1]} de ${ano}`;
+}
+
+async function gerarProposta() {
+    const clienteNome = document.getElementById('prop-cliente-nome').value.trim();
+    const cidade = document.getElementById('prop-cidade').value.trim();
+    const dataProposta = document.getElementById('prop-data').value;
+
+    if (!clienteNome || !cidade || !dataProposta) {
+        alert('Preencha ao menos o nome do cliente, cidade e data.');
+        return;
+    }
+    if (itensPropostaAtual.every(i => !i.descricao.trim())) {
+        alert('Adicione ao menos um item com descrição.');
+        return;
+    }
+
+    const valorTotal = recalcularTotalProposta();
+
+    const payload = {
+        cliente_nome: clienteNome,
+        cliente_cnpj: document.getElementById('prop-cliente-cnpj').value.trim(),
+        cliente_endereco: document.getElementById('prop-cliente-endereco').value.trim(),
+        cliente_telefone: document.getElementById('prop-cliente-telefone').value.trim(),
+        cliente_email: document.getElementById('prop-cliente-email').value.trim(),
+        cidade,
+        data_proposta: dataProposta,
+        prazo_entrega: document.getElementById('prop-prazo').value.trim(),
+        validade: document.getElementById('prop-validade').value.trim(),
+        forma_pagamento: document.getElementById('prop-pagamento').value.trim(),
+        itens: itensPropostaAtual,
+        valor_total: valorTotal
+    };
+
+    const { data, error } = await db.from('propostas').insert(payload).select().single();
+    if (error) {
+        alert('Erro ao salvar a proposta: ' + error.message);
+        console.error(error);
+        return;
+    }
+
+    imprimirProposta(data);
+    voltarListaDePropostas();
+}
+
+async function reimprimirProposta(id) {
+    const proposta = propostasCache.find(p => p.id === id);
+    if (proposta) imprimirProposta(proposta);
+}
+
+function imprimirProposta(p) {
+    const itens = p.itens || [];
+    const linhasItens = itens.map((item, idx) => `
+        <tr>
+            <td>${String(idx + 1).padStart(2, '0')}</td>
+            <td>${item.descricao}</td>
+            <td>${String(item.quantidade).padStart(2, '0')}</td>
+            <td>R$ ${item.valorUnitario.toFixed(2)}</td>
+            <td>R$ ${(item.quantidade * item.valorUnitario).toFixed(2)}</td>
+        </tr>
+    `).join('');
+
+    const html = `
+    <html><head><title>Proposta Nº ${p.numero}</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 50px 60px; color: #1e293b; position: relative; }
+        .marca-dagua {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg);
+            font-size: 70px; font-weight: bold; color: rgba(37, 99, 235, 0.08); white-space: nowrap; z-index: -1;
+        }
+        h1 { font-size: 18px; margin-bottom: 4px; }
+        .data-linha { color: #475569; margin-bottom: 28px; }
+        .duas-colunas { display: flex; gap: 40px; margin-bottom: 26px; }
+        .bloco { flex: 1; }
+        .bloco h3 { font-size: 13px; text-transform: uppercase; color: #2563eb; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+        .bloco p { font-size: 13px; margin: 6px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #e2e8f0; padding: 8px 10px; font-size: 13px; text-align: left; }
+        th { background: #f1f5f9; }
+        .total-row td { font-weight: bold; background: #f8fafc; text-align: right; }
+        .termos { margin-top: 26px; font-size: 13px; line-height: 1.8; }
+    </style>
+    </head><body>
+        <div class="marca-dagua">${MARCA_DAGUA_TEXTO}</div>
+        <h1>ORÇAMENTO OU PROPOSTA COMERCIAL Nº ${p.numero}</h1>
+        <div class="data-linha">${p.cidade}, ${formatarDataExtenso(p.data_proposta)}.</div>
+
+        <div class="duas-colunas">
+            <div class="bloco">
+                <h3>Dados do cliente</h3>
+                <p><b>Cliente:</b> ${p.cliente_nome}</p>
+                <p><b>CNPJ:</b> ${p.cliente_cnpj || '-'}</p>
+                <p><b>Endereço:</b> ${p.cliente_endereco || '-'}</p>
+                <p><b>Telefone:</b> ${p.cliente_telefone || '-'}</p>
+                <p><b>E-mail:</b> ${p.cliente_email || '-'}</p>
+            </div>
+            <div class="bloco">
+                <h3>Dados do fornecedor</h3>
+                <p><b>Nome da empresa:</b> ${FORNECEDOR.nome}</p>
+                <p><b>CNPJ:</b> ${FORNECEDOR.cnpj}</p>
+                <p><b>Endereço:</b> ${FORNECEDOR.endereco}</p>
+                <p><b>Telefone:</b> ${FORNECEDOR.telefone}</p>
+                <p><b>E-mail:</b> ${FORNECEDOR.email}</p>
+            </div>
+        </div>
+
+        <h3 style="font-size:13px; text-transform:uppercase; color:#2563eb;">Descrição do(s) produto(s) e/ou serviço(s)</h3>
+        <table>
+            <thead><tr><th>Item</th><th>Descrição detalhada do Item</th><th>Quant.</th><th>Valor Unitário</th><th>Valor Total</th></tr></thead>
+            <tbody>
+                ${linhasItens}
+                <tr class="total-row"><td colspan="4">VALOR TOTAL DA PROPOSTA</td><td>R$ ${parseFloat(p.valor_total).toFixed(2)}</td></tr>
+            </tbody>
+        </table>
+
+        <div class="termos">
+            <p><b>Prazo/Data de entrega:</b> ${p.prazo_entrega || '-'}</p>
+            <p><b>Validade da proposta:</b> ${p.validade || '-'}</p>
+            <p><b>Forma de pagamento:</b> ${p.forma_pagamento || '-'}</p>
+        </div>
+    </body></html>`;
+
+    const janela = window.open('', '_blank');
+    janela.document.write(html);
+    janela.document.close();
+    janela.focus();
+    setTimeout(() => janela.print(), 300);
+}
+
+// ---------- Novo Boleto Avulso ----------
+async function abrirModalNovoBoleto() {
+    await carregarImplantacoesCobradas();
+    const select = document.getElementById('nb-cliente');
+    select.innerHTML = clientes
+        .filter(c => c.status === 'ativo')
+        .map(c => `<option value="${c.id}">${c.razaoSocial}</option>`)
+        .join('');
+    document.getElementById('nb-referencia').value = '';
+    const venc = new Date();
+    venc.setDate(venc.getDate() + 3);
+    document.getElementById('nb-vencimento').value = venc.toISOString().slice(0, 10);
+    preencherValorBoletoAvulso();
+    document.getElementById('modal-novo-boleto').style.display = 'flex';
+}
+
+function fecharModalNovoBoleto() {
+    document.getElementById('modal-novo-boleto').style.display = 'none';
+}
+
+function preencherValorBoletoAvulso() {
+    const id = document.getElementById('nb-cliente').value;
+    const c = clientes.find(cl => cl.id === id);
+    const linha = document.getElementById('nb-implantacao-linha');
+    const check = document.getElementById('nb-implantacao');
+    if (!c) {
+        document.getElementById('nb-valor').value = '';
+        linha.style.display = 'none';
+        check.checked = false;
+        return;
+    }
+    const prev = valorPrevistoFatura(c);
+    if (prev.incluiImplantacao) {
+        linha.style.display = 'flex';
+        document.getElementById('nb-implantacao-texto').textContent = `Incluir implantação (R$ ${c.plano.implantacao.toFixed(2)}) — ainda não cobrada deste cliente`;
+        check.checked = true;
+    } else {
+        linha.style.display = 'none';
+        check.checked = false;
+    }
+    atualizarValorBoletoAvulso();
+}
+
+function atualizarValorBoletoAvulso() {
+    const id = document.getElementById('nb-cliente').value;
+    const c = clientes.find(cl => cl.id === id);
+    if (!c) return;
+    const incluir = document.getElementById('nb-implantacao').checked;
+    const total = c.plano.valor + (incluir ? c.plano.implantacao : 0);
+    document.getElementById('nb-valor').value = (Math.round(total * 100) / 100).toFixed(2);
+}
+
+async function gerarBoletoAvulso() {
+    const clienteId = document.getElementById('nb-cliente').value;
+    const valor = parseFloat(document.getElementById('nb-valor').value);
+    const referencia = document.getElementById('nb-referencia').value.trim();
+    const vencimento = document.getElementById('nb-vencimento').value;
+    const incluiImplantacao = document.getElementById('nb-implantacao-linha').style.display !== 'none' && document.getElementById('nb-implantacao').checked;
+
+    if (!clienteId || !valor || valor <= 0 || !referencia || !vencimento) {
+        alert('Preencha cliente, valor, referência/descrição e data de vencimento.');
+        return;
+    }
+
+    const c = clientes.find(cl => cl.id === clienteId);
+
+    const { data: novaFatura, error } = await db.from('faturas').insert({
+        cliente_id: clienteId, referencia, valor, status: 'aberto',
+        data_vencimento: vencimento, inclui_implantacao: incluiImplantacao
+    }).select().single();
+    if (error) {
+        alert('Erro ao salvar a fatura: ' + error.message);
+        return;
+    }
+
+    const { data: resultadoAsaas, error: erroFuncao } = await db.functions.invoke('asaas-gerar-cobranca', { body: { faturaId: novaFatura.id } });
+    const erro = await extrairErroFuncao(erroFuncao, resultadoAsaas);
+    if (erro) {
+        alert('Boleto salvo no CRM, mas houve erro ao gerar na Asaas: ' + erro + '\n\nVocê pode tentar de novo pelo botão "Gerar Boleto" na aba Financeiro do cliente.');
+        fecharModalNovoBoleto();
+        return;
+    }
+
+    await registrarHistorico(clienteId, "Usuário Demo", [{ campo: "Fatura", de: "-", para: "Boleto avulso gerado (" + referencia + ") - R$ " + valor.toFixed(2) + (incluiImplantacao ? " (inclui implantação)" : "") }]);
+
+    fecharModalNovoBoleto();
+    alert('Boleto avulso gerado com sucesso para ' + c.razaoSocial + '!');
+    window.open(resultadoAsaas.boletoUrl || resultadoAsaas.invoiceUrl, '_blank');
+
+    if (clienteAtualId === clienteId) {
+        await carregarDetalheCliente(clienteId);
+        renderFinanceiro();
+        renderHistorico();
+    }
+}
+
+// ---------- Implantação (cobrada só no primeiro boleto) ----------
+let clienteIdsComImplantacaoCobrada = new Set();
+
+async function carregarImplantacoesCobradas() {
+    const { data, error } = await db.from('faturas').select('cliente_id').eq('inclui_implantacao', true);
+    if (error) {
+        console.error(error);
+        clienteIdsComImplantacaoCobrada = new Set();
+        return;
+    }
+    clienteIdsComImplantacaoCobrada = new Set((data || []).map(r => r.cliente_id));
+}
+
+// Valor da próxima fatura do cliente: recorrência + implantação (só se a implantação ainda não foi cobrada)
+function valorPrevistoFatura(c) {
+    const impl = c.plano.implantacao || 0;
+    const pendente = impl > 0 && !clienteIdsComImplantacaoCobrada.has(c.id);
+    const total = c.plano.valor + (pendente ? impl : 0);
+    return { valor: Math.round(total * 100) / 100, incluiImplantacao: pendente };
 }
 
 // ---------- Init ----------

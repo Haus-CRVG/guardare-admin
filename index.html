@@ -40,6 +40,36 @@
     </div>
 </div>
 
+<div class="modal-overlay" id="modal-novo-boleto" style="display:none">
+    <div class="modal-box" style="max-width:460px;">
+        <h3>+ Novo Boleto</h3>
+        <div class="form-group">
+            <label class="required">Cliente</label>
+            <select id="nb-cliente" onchange="preencherValorBoletoAvulso()"></select>
+        </div>
+        <div class="form-group">
+            <label class="required">Valor</label>
+            <input type="number" step="0.01" min="0.01" id="nb-valor">
+        </div>
+        <div class="form-group">
+            <label class="required">Referência/Descrição</label>
+            <input type="text" id="nb-referencia" placeholder="Ex: Renegociação 09/2026, ou Implantação">
+        </div>
+        <div class="form-group">
+            <label class="required">Data de vencimento</label>
+            <input type="date" id="nb-vencimento">
+        </div>
+        <label class="checkbox-item" id="nb-implantacao-linha" style="display:none; margin: 4px 0 14px;">
+            <input type="checkbox" id="nb-implantacao" onchange="atualizarValorBoletoAvulso()"> <span id="nb-implantacao-texto"></span>
+        </label>
+        <div class="hint" style="margin-top:0;">Use isso pra cobranças avulsas — renegociação, implantação, ou qualquer boleto fora do ciclo normal de faturamento.</div>
+        <div class="form-actions">
+            <button class="btn-new" onclick="gerarBoletoAvulso()">Gerar Boleto</button>
+            <button class="btn-action" onclick="fecharModalNovoBoleto()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
 <div class="modal-overlay" id="modal-credenciais" style="display:none">
     <div class="modal-box" style="max-width:420px;">
         <h3>🔑 Credenciais de Acesso</h3>
@@ -62,6 +92,37 @@
     </div>
 </div>
 
+<div class="modal-overlay" id="modal-novo-chamado-admin" style="display:none">
+    <div class="modal-box" style="max-width:480px;">
+        <h3>+ Novo Chamado</h3>
+        <div class="form-group">
+            <label class="required">Cliente</label>
+            <select id="nca-cliente"></select>
+        </div>
+        <div class="form-group">
+            <label>Categoria</label>
+            <select id="nca-categoria">
+                <option>Suporte Técnico</option>
+                <option>Alteração de Backup</option>
+                <option>Financeiro</option>
+                <option>Outro</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="required">Assunto</label>
+            <input type="text" id="nca-assunto" placeholder="Ex: Confirmação de manutenção programada">
+        </div>
+        <div class="form-group">
+            <label class="required">Mensagem inicial</label>
+            <textarea id="nca-mensagem" placeholder="Escreva a primeira mensagem..."></textarea>
+        </div>
+        <div class="form-actions">
+            <button class="btn-new" onclick="criarChamadoAdmin()">Abrir Chamado</button>
+            <button class="btn-action" onclick="fecharModalNovoChamadoAdmin()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
 <div id="app-crm" style="display:none">
 
 <div id="view-lista">
@@ -73,6 +134,7 @@
         <div style="display:flex; gap:10px;">
             <button class="btn-action" id="btn-usuarios" style="display:none;" onclick="abrirUsuarios()">👑 Gerenciar Usuários</button>
             <button class="btn-action" onclick="abrirChamadosAdmin()">🎫 Chamados <span id="badge-chamados" class="badge-nao-lida" style="display:none;">0</span></button>
+            <button class="btn-action" onclick="abrirPropostas()">📋 Propostas</button>
             <button class="btn-action" id="btn-faturamento" onclick="abrirFaturamento()">💰 Faturamento</button>
             <button class="btn-new" onclick="abrirNovoCliente()">+ Novo Cliente</button>
             <button class="btn-action" onclick="fazerLogout()">🚪 Sair</button>
@@ -203,6 +265,10 @@
                     <label>Dia de Vencimento</label>
                     <input type="number" min="1" max="31" id="f-plano-dia" placeholder="Ex: 8">
                 </div>
+                <div class="form-group">
+                    <label>Valor de Implantação (cobrança única)</label>
+                    <input type="number" step="0.01" min="0" id="f-plano-implantacao" placeholder="Ex: 199.00">
+                </div>
             </div>
             <div class="form-actions">
                 <button class="btn-new" onclick="salvarDadosCliente()">Salvar Dados</button>
@@ -255,6 +321,7 @@
             <h1>Faturamento</h1>
             <div class="subtitle" id="faturamento-mes-label">-</div>
         </div>
+        <button class="btn-new" onclick="abrirModalNovoBoleto()">+ Novo Boleto</button>
     </div>
     <div class="stats-grid">
         <div class="stat-card"><h3>A Faturar Este Mês</h3><p id="faturamento-total">R$ 0,00</p></div>
@@ -300,6 +367,7 @@
             <h1>🎫 Chamados</h1>
             <div class="subtitle">Conversas com os clientes</div>
         </div>
+        <button class="btn-new" onclick="abrirModalNovoChamadoAdmin()">+ Novo Chamado</button>
     </div>
     <div class="chamados-layout">
         <div class="chamados-lista-painel">
@@ -324,8 +392,131 @@
                 <div class="chat-thread" id="chat-thread-admin"></div>
                 <div class="chat-input">
                     <textarea id="chat-input-admin" placeholder="Escreva uma resposta..."></textarea>
-                    <button class="btn-new" onclick="enviarMensagemChamadoAdmin()">Enviar</button>
+                    <button class="btn-new" id="btn-enviar-chamado-admin" onclick="enviarMensagemChamadoAdmin()">Enviar</button>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="view-propostas" style="display:none">
+    <button class="btn-back" onclick="voltarListaDePropostas()">&larr; Voltar para clientes</button>
+
+    <div id="propostas-lista-view">
+        <div class="header">
+            <div>
+                <h1>📋 Propostas</h1>
+                <div class="subtitle">Orçamentos e propostas comerciais geradas</div>
+            </div>
+            <button class="btn-new" onclick="abrirFormNovaProposta()">+ Nova Proposta</button>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nº</th>
+                        <th>Cliente</th>
+                        <th>Data</th>
+                        <th>Valor Total</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-propostas"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="propostas-form-view" style="display:none">
+        <button class="btn-back" onclick="voltarListaDePropostas()">&larr; Voltar para propostas</button>
+        <div class="header">
+            <div>
+                <h1>Nova Proposta</h1>
+                <div class="subtitle">Preencha os dados do cliente e os itens do orçamento</div>
+            </div>
+        </div>
+
+        <div class="tab-content">
+            <div class="form-grid">
+                <div class="form-group full" style="border-top:1px solid var(--border); padding-top:16px;">
+                    <label style="font-size:14px; color:var(--text); font-weight:600;">Dados do Cliente</label>
+                </div>
+                <div class="form-group full">
+                    <label>Cliente já cadastrado (opcional — preenche os campos abaixo)</label>
+                    <select id="prop-cliente-select" onchange="preencherClienteProposta()">
+                        <option value="">— selecionar para preencher automaticamente —</option>
+                    </select>
+                </div>
+                <div class="form-group full">
+                    <label class="required">Cliente</label>
+                    <input type="text" id="prop-cliente-nome">
+                </div>
+                <div class="form-group">
+                    <label>CNPJ/CPF</label>
+                    <input type="text" id="prop-cliente-cnpj">
+                </div>
+                <div class="form-group">
+                    <label>Telefone</label>
+                    <input type="text" id="prop-cliente-telefone">
+                </div>
+                <div class="form-group full">
+                    <label>Endereço</label>
+                    <input type="text" id="prop-cliente-endereco">
+                </div>
+                <div class="form-group full">
+                    <label>E-mail</label>
+                    <input type="email" id="prop-cliente-email">
+                </div>
+
+                <div class="form-group full" style="border-top:1px solid var(--border); padding-top:16px;">
+                    <label style="font-size:14px; color:var(--text); font-weight:600;">Dados da Proposta</label>
+                </div>
+                <div class="form-group">
+                    <label class="required">Cidade</label>
+                    <input type="text" id="prop-cidade" placeholder="Ex: Cascavel - PR">
+                </div>
+                <div class="form-group">
+                    <label class="required">Data</label>
+                    <input type="date" id="prop-data">
+                </div>
+                <div class="form-group">
+                    <label>Prazo/Data de entrega</label>
+                    <input type="text" id="prop-prazo" placeholder="Ex: Imediato após assinatura do contrato">
+                </div>
+                <div class="form-group">
+                    <label>Validade da proposta</label>
+                    <input type="text" id="prop-validade" placeholder="Ex: 07 dias">
+                </div>
+                <div class="form-group">
+                    <label>Forma de pagamento</label>
+                    <input type="text" id="prop-pagamento" placeholder="Ex: Boleto Bancário">
+                </div>
+            </div>
+
+            <div class="form-group full" style="margin-top:24px;">
+                <label style="font-size:14px; color:var(--text); font-weight:600;">Itens do Orçamento</label>
+            </div>
+            <table style="margin-top:10px;">
+                <thead>
+                    <tr>
+                        <th style="width:60px;">Item</th>
+                        <th>Descrição</th>
+                        <th style="width:80px;">Quant.</th>
+                        <th style="width:130px;">Valor Unit.</th>
+                        <th style="width:130px;">Valor Total</th>
+                        <th style="width:40px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-itens-proposta"></tbody>
+            </table>
+            <button class="btn-action" onclick="adicionarItemProposta()">+ Adicionar Item</button>
+
+            <div style="text-align:right; margin-top:16px; font-size:18px; font-weight:600;">
+                Valor Total: <span id="prop-valor-total-exibido">R$ 0,00</span>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn-new" onclick="gerarProposta()">Gerar Proposta (PDF)</button>
+                <button class="btn-action" onclick="voltarListaDePropostas()">Cancelar</button>
             </div>
         </div>
     </div>
@@ -430,10 +621,6 @@
             <div class="form-group full">
                 <label class="required">Origem do Backup (um caminho por linha)</label>
                 <textarea id="p-origem" placeholder="C:\ecosis\dados\ecodados.eco"></textarea>
-            </div>
-            <div class="form-group full">
-                <label class="required">Caminho da Cópia Local</label>
-                <textarea id="p-copialocal" placeholder="Ex: C:/Backup Local/"></textarea>
             </div>
             <div class="form-group full">
                 <label class="required">Dias da Semana</label>
